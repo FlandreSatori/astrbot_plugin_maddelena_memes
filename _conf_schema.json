@@ -1,0 +1,68 @@
+{
+    "padding_x": {
+        "description": "左右页边距",
+        "type": "int",
+        "default": 28,
+        "hint": "文字区域左右留白，建议 10-60"
+    },
+    "padding_y": {
+        "description": "上下页边距",
+        "type": "int",
+        "default": 28,
+        "hint": "文字区域上下留白，建议 10-60"
+    },
+    "line_spacing": {
+        "description": "行间距",
+        "type": "int",
+        "default": 8,
+        "hint": "多行文本的行间距，建议 0-20"
+    },
+    "char_spacing": {
+        "description": "字间距",
+        "type": "int",
+        "default": 0,
+        "hint": "每个字符之间的额外间距，建议 0-6"
+    },
+    "font_min_size": {
+        "description": "最小字号",
+        "type": "int",
+        "default": 18,
+        "hint": "自适应缩小时的下限"
+    },
+    "font_max_size": {
+        "description": "最大字号",
+        "type": "int",
+        "default": 72,
+        "hint": "自适应放大时的上限"
+    },
+    "font_path": {
+        "description": "自定义字体文件路径",
+        "type": "string",
+        "default": "",
+        "hint": "留空则使用系统字体；可填绝对路径"
+    },
+    "text_color": {
+        "description": "默认文字颜色",
+        "type": "string",
+        "default": "#1e1e1e",
+        "hint": "支持 #RRGGBB 或 #RRGGBBAA"
+    },
+    "stroke_width": {
+        "description": "文字描边宽度",
+        "type": "int",
+        "default": 0,
+        "hint": "0 表示无描边，建议 0-3"
+    },
+    "stroke_fill": {
+        "description": "描边颜色",
+        "type": "string",
+        "default": "#ffffff",
+        "hint": "支持 #RRGGBB 或 #RRGGBBAA"
+    },
+    "align": {
+        "description": "水平对齐",
+        "type": "string",
+        "default": "center",
+        "hint": "可选：left、center、right"
+    }
+}
