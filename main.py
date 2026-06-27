@@ -137,8 +137,8 @@ def _get_render_config(config: AstrBotConfig | dict | None) -> RenderConfig:
         padding_y=_clamp_int(get_value("padding_y", 28), 28, 0, 200),
         line_spacing=_clamp_int(get_value("line_spacing", 8), 8, 0, 80),
         char_spacing=_clamp_int(get_value("char_spacing", 0), 0, 0, 20),
-        font_min_size=_clamp_int(get_value("font_min_size", 18), 18, 8, 200),
-        font_max_size=_clamp_int(get_value("font_max_size", 72), 72, 12, 260),
+        font_min_size=_clamp_int(get_value("font_min_size", 18), 18, 8, 240),
+        font_max_size=_clamp_int(get_value("font_max_size", 180), 180, 12, 400),
         font_path=font_path,
         text_color=text_color,
         stroke_width=_clamp_int(get_value("stroke_width", 0), 0, 0, 12),
@@ -269,13 +269,29 @@ def _render_styled_text(text: str, config: RenderConfig) -> Image.Image:
     chosen_lines: list[list[StyledChar]] = [[StyledChar("", StyleState(color=config.text_color))]]
     chosen_widths = [0.0]
     chosen_line_height = _font_line_height(draw, chosen_font)
+    best_score = -1.0
 
     for font_size in range(max_size, min_size - 1, -2):
         font = _load_font(font_size, config.font_path)
         lines, widths = _wrap_styled_chars(draw, styled_chars, font, max_width, config.char_spacing)
         line_height = _font_line_height(draw, font)
         total_height = len(lines) * line_height + max(0, len(lines) - 1) * config.line_spacing
-        if total_height <= max_height:
+        if total_height > max_height:
+            continue
+
+        widest_line = max(widths, default=0.0)
+        width_ratio = 0.0 if max_width <= 0 else widest_line / max_width
+        height_ratio = 0.0 if max_height <= 0 else total_height / max_height
+        score = max(width_ratio, height_ratio)
+
+        if score > best_score:
+            chosen_font = font
+            chosen_lines = lines
+            chosen_widths = widths
+            chosen_line_height = line_height
+            best_score = score
+
+        if width_ratio >= 0.96 or height_ratio >= 0.96:
             chosen_font = font
             chosen_lines = lines
             chosen_widths = widths

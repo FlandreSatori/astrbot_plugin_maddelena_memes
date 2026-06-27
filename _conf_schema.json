@@ -32,8 +32,8 @@
     "font_max_size": {
         "description": "最大字号",
         "type": "int",
-        "default": 72,
-        "hint": "自适应放大时的上限"
+        "default": 180,
+        "hint": "自适应放大时的上限；单行短文本建议 120-220"
     },
     "font_path": {
         "description": "自定义字体文件路径",
