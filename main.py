@@ -29,6 +29,14 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/simhei.ttf",
     "C:/Windows/Fonts/simsun.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "DejaVuSans.ttf",
+    "arial.ttf",
 ]
 ESCAPE_MAP = {
     "n": "\n",
@@ -112,14 +120,20 @@ def _find_font_path(configured_font_path: object = None) -> str | None:
 
 
 def _load_font(size: int, font_path: str | None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    if font_path is None:
-        logger.warning("[maddelena] 未找到可用字体，将使用默认字体")
-        return ImageFont.load_default()
-    try:
-        return ImageFont.truetype(font_path, size)
-    except OSError:
-        logger.warning(f"[maddelena] 加载字体失败: {font_path}")
-        return ImageFont.load_default()
+    if font_path is not None:
+        try:
+            return ImageFont.truetype(font_path, size)
+        except OSError:
+            logger.warning(f"[maddelena] 加载字体失败: {font_path}")
+
+    for fallback_font in FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(fallback_font, size)
+        except OSError:
+            continue
+
+    logger.warning("[maddelena] 未找到可用字体，将使用默认字体")
+    return ImageFont.load_default()
 
 
 def _get_render_config(config: AstrBotConfig | dict | None) -> RenderConfig:
