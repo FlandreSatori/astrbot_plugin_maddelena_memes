@@ -1,6 +1,6 @@
 name: astrbot_plugin_maddelena_memes
-display_name: 玛德蕾娜举牌
-desc: 生成玛德蕾娜举牌表情包。
-version: v0.2.2
+display_name: 举牌表情包
+desc: 生成举牌表情包，支持多模板扩展。
+version: v0.3.0
 author: FlandreSatori
 repo: https://github.com/FlandreSatori/astrbot_plugin_maddelena_memes

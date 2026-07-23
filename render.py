@@ -1,0 +1,503 @@
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass, replace
+from io import BytesIO
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+from astrbot.api import AstrBotConfig, logger
+
+from .meme_spec import MemeTemplate, Point, Quad
+
+DEFAULT_TEXT_COLOR = (30, 30, 30, 255)
+FONT_CANDIDATES = [
+    "C:/Windows/Fonts/msyhbd.ttc",
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+    "C:/Windows/Fonts/simsun.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "DejaVuSans.ttf",
+    "arial.ttf",
+]
+ESCAPE_MAP = {
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "\\": "\\",
+    "[": "[",
+    "]": "]",
+}
+FLAG_TOKEN_RE = re.compile(r"^(?:-r|-s(\d+))(?:\s+|$)")
+
+
+@dataclass(frozen=True)
+class StyleState:
+    color: tuple[int, int, int, int] = DEFAULT_TEXT_COLOR
+    underline: bool = False
+    strike: bool = False
+
+
+@dataclass(frozen=True)
+class StyledChar:
+    char: str
+    style: StyleState
+
+
+@dataclass(frozen=True)
+class CommandOptions:
+    text: str
+    no_auto_wrap: bool = False
+    fixed_font_size: int | None = None
+
+
+@dataclass(frozen=True)
+class RenderConfig:
+    padding_x: int
+    padding_y: int
+    line_spacing: int
+    char_spacing: int
+    font_min_size: int
+    font_max_size: int
+    font_path: str | None
+    text_color: tuple[int, int, int, int]
+    stroke_width: int
+    stroke_fill: tuple[int, int, int, int]
+    align: str
+    no_auto_wrap: bool = False
+    fixed_font_size: int | None = None
+
+
+def _clamp_int(value: object, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _normalize_align(value: object) -> str:
+    normalized = str(value or "center").strip().lower()
+    if normalized in {"left", "center", "right"}:
+        return normalized
+    return "center"
+
+
+def _parse_color(value: object, default: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    text = str(value or "").strip()
+    if not text:
+        return default
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) == 6:
+        text = f"{text}ff"
+    if len(text) != 8:
+        return default
+    try:
+        return tuple(int(text[index : index + 2], 16) for index in range(0, 8, 2))  # type: ignore[return-value]
+    except ValueError:
+        return default
+
+
+def _find_font_path(configured_font_path: object = None) -> str | None:
+    custom_path = Path(str(configured_font_path or "").strip())
+    if str(configured_font_path or "").strip() and custom_path.exists() and custom_path.is_file():
+        return str(custom_path)
+    for font_path in FONT_CANDIDATES:
+        if Path(font_path).exists():
+            return font_path
+    return None
+
+
+def _load_font(size: int, font_path: str | None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    if font_path is not None:
+        try:
+            return ImageFont.truetype(font_path, size)
+        except OSError:
+            logger.warning(f"[maddelena] 加载字体失败: {font_path}")
+
+    for fallback_font in FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(fallback_font, size)
+        except OSError:
+            continue
+
+    logger.warning("[maddelena] 未找到可用字体，将使用默认字体")
+    return ImageFont.load_default()
+
+
+def get_render_config(config: AstrBotConfig | dict | None) -> RenderConfig:
+    config_data = config or {}
+    getter = getattr(config_data, "get", None)
+    if callable(getter):
+        get_value = getter
+    else:
+        get_value = lambda key, default=None: default
+
+    font_path = _find_font_path(get_value("font_path", ""))
+    text_color = _parse_color(get_value("text_color", "#1e1e1e"), DEFAULT_TEXT_COLOR)
+    return RenderConfig(
+        padding_x=_clamp_int(get_value("padding_x", 28), 28, 0, 200),
+        padding_y=_clamp_int(get_value("padding_y", 28), 28, 0, 200),
+        line_spacing=_clamp_int(get_value("line_spacing", 8), 8, 0, 80),
+        char_spacing=_clamp_int(get_value("char_spacing", 0), 0, 0, 20),
+        font_min_size=_clamp_int(get_value("font_min_size", 18), 18, 8, 240),
+        font_max_size=_clamp_int(get_value("font_max_size", 180), 180, 12, 400),
+        font_path=font_path,
+        text_color=text_color,
+        stroke_width=_clamp_int(get_value("stroke_width", 0), 0, 0, 12),
+        stroke_fill=_parse_color(get_value("stroke_fill", "#ffffff"), (255, 255, 255, 255)),
+        align=_normalize_align(get_value("align", "center")),
+    )
+
+
+def parse_command_options(raw: str) -> CommandOptions:
+    rest = raw.lstrip()
+    no_auto_wrap = False
+    fixed_font_size: int | None = None
+
+    while True:
+        match = FLAG_TOKEN_RE.match(rest)
+        if match is None:
+            break
+        if match.group(1) is not None:
+            fixed_font_size = _clamp_int(match.group(1), 10, 1, 400)
+        else:
+            no_auto_wrap = True
+        rest = rest[match.end() :]
+
+    return CommandOptions(
+        text=rest,
+        no_auto_wrap=no_auto_wrap,
+        fixed_font_size=fixed_font_size,
+    )
+
+
+def _paper_canvas_size(text_quad: Quad) -> tuple[int, int]:
+    top_width = math.dist(text_quad[0], text_quad[1])
+    bottom_width = math.dist(text_quad[3], text_quad[2])
+    left_height = math.dist(text_quad[0], text_quad[3])
+    right_height = math.dist(text_quad[1], text_quad[2])
+    return (
+        max(120, round((top_width + bottom_width) / 2)),
+        max(120, round((left_height + right_height) / 2)),
+    )
+
+
+def _decode_escape(text: str, index: int) -> tuple[str, int]:
+    if index + 1 >= len(text):
+        return "\\", index + 1
+    escaped = ESCAPE_MAP.get(text[index + 1])
+    if escaped is None:
+        return text[index + 1], index + 2
+    return escaped, index + 2
+
+
+def _parse_markup(text: str, default_style: StyleState) -> list[StyledChar]:
+    chars: list[StyledChar] = []
+    stack = [default_style]
+    index = 0
+    while index < len(text):
+        if text[index] == "\\":
+            escaped, index = _decode_escape(text, index)
+            chars.append(StyledChar(escaped, stack[-1]))
+            continue
+        if text.startswith("[color=", index):
+            end = text.find("]", index)
+            if end != -1:
+                color = _parse_color(text[index + 7 : end], stack[-1].color)
+                stack.append(replace(stack[-1], color=color))
+                index = end + 1
+                continue
+        if text.startswith("[/color]", index):
+            if len(stack) > 1:
+                stack.pop()
+            index += 8
+            continue
+        if text.startswith("[u]", index):
+            stack.append(replace(stack[-1], underline=True))
+            index += 3
+            continue
+        if text.startswith("[/u]", index):
+            if len(stack) > 1:
+                stack.pop()
+            index += 4
+            continue
+        if text.startswith("[s]", index):
+            stack.append(replace(stack[-1], strike=True))
+            index += 3
+            continue
+        if text.startswith("[/s]", index):
+            if len(stack) > 1:
+                stack.pop()
+            index += 4
+            continue
+        chars.append(StyledChar(text[index], stack[-1]))
+        index += 1
+    return chars
+
+
+def _measure_char(draw: ImageDraw.ImageDraw, styled_char: StyledChar, font: ImageFont.ImageFont) -> float:
+    if styled_char.char == "\t":
+        return draw.textlength("    ", font=font)
+    return draw.textlength(styled_char.char, font=font)
+
+
+def _wrap_styled_chars(
+    draw: ImageDraw.ImageDraw,
+    styled_chars: list[StyledChar],
+    font: ImageFont.ImageFont,
+    max_width: int,
+    char_spacing: int,
+    auto_wrap: bool = True,
+) -> tuple[list[list[StyledChar]], list[float]]:
+    lines: list[list[StyledChar]] = [[]]
+    widths: list[float] = [0.0]
+
+    for styled_char in styled_chars:
+        if styled_char.char in {"\r"}:
+            continue
+        if styled_char.char == "\n":
+            lines.append([])
+            widths.append(0.0)
+            continue
+
+        char_width = _measure_char(draw, styled_char, font)
+        extra_spacing = char_spacing if lines[-1] else 0
+        next_width = widths[-1] + extra_spacing + char_width
+        if auto_wrap and next_width > max_width and lines[-1]:
+            lines.append([])
+            widths.append(0.0)
+            extra_spacing = 0
+            next_width = char_width
+
+        lines[-1].append(styled_char)
+        widths[-1] = next_width
+
+    return lines, widths
+
+
+def _font_line_height(draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont) -> int:
+    bbox = draw.textbbox((0, 0), "国Ag", font=font)
+    return max(1, bbox[3] - bbox[1])
+
+
+def _layout_fits(
+    widths: list[float],
+    line_count: int,
+    line_height: int,
+    max_width: int,
+    max_height: int,
+    line_spacing: int,
+) -> bool:
+    total_height = line_count * line_height + max(0, line_count - 1) * line_spacing
+    widest_line = max(widths, default=0.0)
+    return widest_line <= max_width and total_height <= max_height
+
+
+def _render_styled_text(text: str, text_quad: Quad, config: RenderConfig) -> Image.Image:
+    canvas_size = _paper_canvas_size(text_quad)
+    text_layer = Image.new("RGBA", canvas_size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(text_layer)
+    max_width = max(20, canvas_size[0] - config.padding_x * 2)
+    max_height = max(20, canvas_size[1] - config.padding_y * 2)
+    styled_chars = _parse_markup(text, StyleState(color=config.text_color))
+    auto_wrap = not config.no_auto_wrap
+
+    min_size = min(config.font_min_size, config.font_max_size)
+    max_size = max(config.font_min_size, config.font_max_size)
+    if config.no_auto_wrap and config.fixed_font_size is None:
+        min_size = 1
+    if config.fixed_font_size is not None:
+        candidate_sizes = [config.fixed_font_size]
+    else:
+        candidate_sizes = list(range(max_size, min_size - 1, -2))
+        if candidate_sizes[-1] != min_size:
+            candidate_sizes.append(min_size)
+
+    chosen_font: ImageFont.ImageFont | None = None
+    chosen_lines: list[list[StyledChar]] = []
+    chosen_widths: list[float] = []
+    chosen_line_height = 1
+    best_score = -1.0
+
+    for font_size in candidate_sizes:
+        font = _load_font(font_size, config.font_path)
+        lines, widths = _wrap_styled_chars(
+            draw,
+            styled_chars,
+            font,
+            max_width,
+            config.char_spacing,
+            auto_wrap=auto_wrap,
+        )
+        line_height = _font_line_height(draw, font)
+        total_height = len(lines) * line_height + max(0, len(lines) - 1) * config.line_spacing
+        widest_line = max(widths, default=0.0)
+
+        if config.no_auto_wrap:
+            if not _layout_fits(widths, len(lines), line_height, max_width, max_height, config.line_spacing):
+                continue
+            chosen_font = font
+            chosen_lines = lines
+            chosen_widths = widths
+            chosen_line_height = line_height
+            break
+
+        if total_height > max_height:
+            continue
+
+        width_ratio = 0.0 if max_width <= 0 else widest_line / max_width
+        height_ratio = 0.0 if max_height <= 0 else total_height / max_height
+        score = max(width_ratio, height_ratio)
+
+        if score > best_score:
+            chosen_font = font
+            chosen_lines = lines
+            chosen_widths = widths
+            chosen_line_height = line_height
+            best_score = score
+
+        if width_ratio >= 0.96 or height_ratio >= 0.96:
+            chosen_font = font
+            chosen_lines = lines
+            chosen_widths = widths
+            chosen_line_height = line_height
+            break
+
+    if chosen_font is None and config.fixed_font_size is not None and auto_wrap:
+        chosen_font = _load_font(config.fixed_font_size, config.font_path)
+        chosen_lines, chosen_widths = _wrap_styled_chars(
+            draw,
+            styled_chars,
+            chosen_font,
+            max_width,
+            config.char_spacing,
+            auto_wrap=True,
+        )
+        chosen_line_height = _font_line_height(draw, chosen_font)
+
+    if chosen_font is None:
+        return text_layer
+
+    total_height = len(chosen_lines) * chosen_line_height + max(0, len(chosen_lines) - 1) * config.line_spacing
+    y = (canvas_size[1] - total_height) / 2
+
+    for line, line_width in zip(chosen_lines, chosen_widths):
+        if config.align == "left":
+            x = float(config.padding_x)
+        elif config.align == "right":
+            x = float(canvas_size[0] - config.padding_x - line_width)
+        else:
+            x = float((canvas_size[0] - line_width) / 2)
+
+        for index, styled_char in enumerate(line):
+            if index > 0:
+                x += config.char_spacing
+            draw_char = "    " if styled_char.char == "\t" else styled_char.char
+            if draw_char:
+                draw.text(
+                    (x, y),
+                    draw_char,
+                    font=chosen_font,
+                    fill=styled_char.style.color,
+                    stroke_width=config.stroke_width,
+                    stroke_fill=config.stroke_fill,
+                )
+                bbox = draw.textbbox(
+                    (x, y),
+                    draw_char,
+                    font=chosen_font,
+                    stroke_width=config.stroke_width,
+                )
+                if styled_char.style.underline and not draw_char.isspace():
+                    underline_y = bbox[3] - max(1, chosen_line_height // 14)
+                    draw.line(
+                        (bbox[0], underline_y, bbox[2], underline_y),
+                        fill=styled_char.style.color,
+                        width=max(1, chosen_line_height // 18),
+                    )
+                if styled_char.style.strike and not draw_char.isspace():
+                    strike_y = (bbox[1] + bbox[3]) / 2
+                    draw.line(
+                        (bbox[0], strike_y, bbox[2], strike_y),
+                        fill=styled_char.style.color,
+                        width=max(1, chosen_line_height // 18),
+                    )
+            x += _measure_char(draw, styled_char, chosen_font)
+        y += chosen_line_height + config.line_spacing
+
+    return text_layer
+
+
+def _solve_linear_system(matrix: list[list[float]], vector: list[float]) -> list[float]:
+    size = len(vector)
+    augmented = [row[:] + [value] for row, value in zip(matrix, vector)]
+
+    for pivot_index in range(size):
+        pivot_row = max(range(pivot_index, size), key=lambda row_index: abs(augmented[row_index][pivot_index]))
+        if abs(augmented[pivot_row][pivot_index]) < 1e-9:
+            raise ValueError("透视矩阵不可逆")
+        augmented[pivot_index], augmented[pivot_row] = augmented[pivot_row], augmented[pivot_index]
+
+        pivot = augmented[pivot_index][pivot_index]
+        for column_index in range(pivot_index, size + 1):
+            augmented[pivot_index][column_index] /= pivot
+
+        for row_index in range(size):
+            if row_index == pivot_index:
+                continue
+            factor = augmented[row_index][pivot_index]
+            for column_index in range(pivot_index, size + 1):
+                augmented[row_index][column_index] -= factor * augmented[pivot_index][column_index]
+
+    return [augmented[row_index][-1] for row_index in range(size)]
+
+
+def _find_coeffs(pa: list[Point], pb: list[Point]) -> list[float]:
+    matrix: list[list[float]] = []
+    vector: list[float] = []
+    for (x1, y1), (x2, y2) in zip(pa, pb):
+        matrix.append([x1, y1, 1, 0, 0, 0, -x2 * x1, -x2 * y1])
+        vector.append(x2)
+        matrix.append([0, 0, 0, x1, y1, 1, -y2 * x1, -y2 * y1])
+        vector.append(y2)
+    return _solve_linear_system(matrix, vector)
+
+
+def render_meme(text: str, meme: MemeTemplate, config: RenderConfig | None = None) -> bytes:
+    cleaned = text.strip()
+    if not cleaned:
+        raise ValueError("请输入要写在纸上的内容")
+    if len(cleaned) > 500:
+        raise ValueError("文本过长，最多支持 500 个字符")
+
+    image_path = meme.image_path
+    if not image_path.exists():
+        raise FileNotFoundError(f"缺少底图: {image_path}")
+
+    render_config = config or get_render_config(None)
+    base = Image.open(image_path).convert("RGBA")
+    text_layer = _render_styled_text(cleaned, meme.text_quad, render_config)
+    src_quad = [
+        (0, 0),
+        (text_layer.size[0] - 1, 0),
+        (text_layer.size[0] - 1, text_layer.size[1] - 1),
+        (0, text_layer.size[1] - 1),
+    ]
+    coeffs = _find_coeffs(list(meme.text_quad), src_quad)
+    warped = text_layer.transform(base.size, Image.Transform.PERSPECTIVE, coeffs, Image.Resampling.BICUBIC)
+    result = Image.alpha_composite(base, warped)
+
+    output = BytesIO()
+    result.convert("RGB").save(output, format="PNG")
+    return output.getvalue()
