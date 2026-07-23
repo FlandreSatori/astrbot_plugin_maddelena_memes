@@ -37,10 +37,10 @@ MEMES: list[MemeTemplate] = [
         command="喵梦说",
         image="喵梦.png",
         text_quad=(
-            (342,177),  # top-left
-            (600, 177),  # top-right
-            (600, 347),  # bottom-right
-            (342, 347),  # bottom-left
+            (85, 78),  # top-left
+            (286, 78),  # top-right
+            (286, 215),  # bottom-right
+            (85, 215),  # bottom-left
         ),
     ),
     MemeTemplate(
@@ -49,10 +49,10 @@ MEMES: list[MemeTemplate] = [
         aliases=("睦说", "若叶睦说"),
         image="睦子米.png",
         text_quad=(
-            (342,177),  # top-left
-            (600, 177),  # top-right
-            (600, 347),  # bottom-right
-            (342, 347),  # bottom-left
+            (85, 78),  # top-left
+            (286, 78),  # top-right
+            (286, 215),  # bottom-right
+            (85, 215),  # bottom-left
         ),
     ),
     MemeTemplate(
@@ -60,10 +60,10 @@ MEMES: list[MemeTemplate] = [
         command="祥子说",
         image="祥子.png",
         text_quad=(
-            (342,177),  # top-left
-            (600, 177),  # top-right
-            (600, 347),  # bottom-right
-            (342, 347),  # bottom-left
+            (85, 78),  # top-left
+            (286, 78),  # top-right
+            (286, 215),  # bottom-right
+            (85, 215),  # bottom-left
         ),
     ),
 	
