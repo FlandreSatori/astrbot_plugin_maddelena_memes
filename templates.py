@@ -33,17 +33,6 @@ MEMES: list[MemeTemplate] = [
         ),
     ),
     MemeTemplate(
-        id="喵梦",
-        command="喵梦说",
-        image="喵梦.png",
-        text_quad=(
-            (85, 78),  # top-left
-            (286, 78),  # top-right
-            (286, 215),  # bottom-right
-            (85, 215),  # bottom-left
-        ),
-    ),
-    MemeTemplate(
         id="睦子米",
         command="睦子米说",
         aliases=("睦说", "若叶睦说"),
