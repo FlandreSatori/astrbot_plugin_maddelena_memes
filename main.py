@@ -67,10 +67,18 @@ class MaddelenaMemesPlugin(Star):
 
         try:
             loop = asyncio.get_running_loop()
+            logger.info(
+                f"[maddelena][font] handle_meme meme={meme.id} "
+                f"config.font_path={self.config.get('font_path', '')!r}"
+            )
             render_config = replace(
                 get_render_config(self.config),
                 no_auto_wrap=options.no_auto_wrap,
                 fixed_font_size=options.fixed_font_size,
+            )
+            logger.info(
+                f"[maddelena][font] before render font_path={render_config.font_path!r} "
+                f"fixed_size={render_config.fixed_font_size} no_auto_wrap={render_config.no_auto_wrap}"
             )
             image_bytes = await loop.run_in_executor(
                 None,

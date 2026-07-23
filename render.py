@@ -109,29 +109,83 @@ def _parse_color(value: object, default: tuple[int, int, int, int]) -> tuple[int
 
 
 def _find_font_path(configured_font_path: object = None) -> str | None:
-    custom_path = Path(str(configured_font_path or "").strip())
-    if str(configured_font_path or "").strip() and custom_path.exists() and custom_path.is_file():
-        return str(custom_path)
+    raw = str(configured_font_path or "").strip()
+    logger.info(f"[maddelena][font] config.font_path raw={configured_font_path!r} stripped={raw!r}")
+
+    if raw:
+        candidates = [Path(raw)]
+        # Also try relative to plugin directory (common when users fill a relative path).
+        if not Path(raw).is_absolute():
+            plugin_relative = Path(__file__).parent / raw
+            candidates.append(plugin_relative)
+            assets_relative = Path(__file__).parent / "assets" / raw
+            candidates.append(assets_relative)
+
+        for custom_path in candidates:
+            exists = custom_path.exists()
+            is_file = custom_path.is_file() if exists else False
+            logger.info(
+                f"[maddelena][font] try custom path={custom_path} "
+                f"exists={exists} is_file={is_file}"
+            )
+            if exists and is_file:
+                resolved = str(custom_path.resolve())
+                logger.info(f"[maddelena][font] using custom font: {resolved}")
+                return resolved
+
+        logger.warning(
+            f"[maddelena][font] custom font not usable ({raw!r}), "
+            "falling back to system font candidates"
+        )
+    else:
+        logger.info("[maddelena][font] font_path empty, using system font candidates")
+
     for font_path in FONT_CANDIDATES:
         if Path(font_path).exists():
+            logger.info(f"[maddelena][font] using system font: {font_path}")
             return font_path
+
+    logger.warning("[maddelena][font] no system font candidate found")
     return None
+
+
+_LOADED_FONT_LOGGED: set[str] = set()
 
 
 def _load_font(size: int, font_path: str | None) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     if font_path is not None:
         try:
-            return ImageFont.truetype(font_path, size)
-        except OSError:
-            logger.warning(f"[maddelena] 加载字体失败: {font_path}")
+            font = ImageFont.truetype(font_path, size)
+            log_key = f"ok:{font_path}"
+            if log_key not in _LOADED_FONT_LOGGED:
+                _LOADED_FONT_LOGGED.add(log_key)
+                path_attr = getattr(font, "path", None)
+                logger.info(
+                    f"[maddelena][font] loaded ok path={font_path} "
+                    f"size={size} pillow_path={path_attr!r} type={type(font).__name__}"
+                )
+            return font
+        except OSError as exc:
+            log_key = f"fail:{font_path}"
+            if log_key not in _LOADED_FONT_LOGGED:
+                _LOADED_FONT_LOGGED.add(log_key)
+                logger.warning(f"[maddelena][font] load failed path={font_path} err={exc!s}")
 
     for fallback_font in FONT_CANDIDATES:
         try:
-            return ImageFont.truetype(fallback_font, size)
+            font = ImageFont.truetype(fallback_font, size)
+            log_key = f"fallback:{fallback_font}"
+            if log_key not in _LOADED_FONT_LOGGED:
+                _LOADED_FONT_LOGGED.add(log_key)
+                logger.warning(
+                    f"[maddelena][font] fell back to system font: {fallback_font} "
+                    f"(requested={font_path!r})"
+                )
+            return font
         except OSError:
             continue
 
-    logger.warning("[maddelena] 未找到可用字体，将使用默认字体")
+    logger.warning("[maddelena][font] no usable font, using PIL default bitmap font")
     return ImageFont.load_default()
 
 
@@ -143,9 +197,20 @@ def get_render_config(config: AstrBotConfig | dict | None) -> RenderConfig:
     else:
         get_value = lambda key, default=None: default
 
-    font_path = _find_font_path(get_value("font_path", ""))
+    raw_font_path = get_value("font_path", "")
+    config_type = type(config_data).__name__
+    try:
+        config_keys = list(config_data.keys()) if hasattr(config_data, "keys") else []
+    except Exception:
+        config_keys = []
+    logger.info(
+        f"[maddelena][font] get_render_config type={config_type} "
+        f"keys={config_keys} raw_font_path={raw_font_path!r}"
+    )
+
+    font_path = _find_font_path(raw_font_path)
     text_color = _parse_color(get_value("text_color", "#1e1e1e"), DEFAULT_TEXT_COLOR)
-    return RenderConfig(
+    render_config = RenderConfig(
         padding_x=_clamp_int(get_value("padding_x", 28), 28, 0, 200),
         padding_y=_clamp_int(get_value("padding_y", 28), 28, 0, 200),
         line_spacing=_clamp_int(get_value("line_spacing", 8), 8, 0, 80),
@@ -158,6 +223,9 @@ def get_render_config(config: AstrBotConfig | dict | None) -> RenderConfig:
         stroke_fill=_parse_color(get_value("stroke_fill", "#ffffff"), (255, 255, 255, 255)),
         align=_normalize_align(get_value("align", "center")),
     )
+    logger.info(f"[maddelena][font] resolved RenderConfig.font_path={render_config.font_path!r}")
+    return render_config
+
 
 
 def parse_command_options(raw: str) -> CommandOptions:
