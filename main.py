@@ -51,17 +51,20 @@ class MaddelenaMemesPlugin(Star):
     async def handle_meme(self, event: AstrMessageEvent):
         meme = self._resolve_meme(event)
         if meme is None:
+            event.stop_event()
             yield event.plain_result("未找到对应的表情包模板")
             return
 
         message_str = event.message_str.strip()
         parts = message_str.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
+            event.stop_event()
             yield event.plain_result(_build_usage(meme))
             return
 
         options = parse_command_options(parts[1])
         if not options.text.strip():
+            event.stop_event()
             yield event.plain_result("请输入要写在纸上的内容")
             return
 
@@ -91,9 +94,11 @@ class MaddelenaMemesPlugin(Star):
                 temp_file.write(image_bytes)
                 temp_path = temp_file.name
             try:
+                event.stop_event()
                 yield event.image_result(temp_path)
             finally:
                 Path(temp_path).unlink(missing_ok=True)
         except Exception as exc:
             logger.error(f"[maddelena] 生成图片失败 ({meme.id}): {exc!s}")
+            event.stop_event()
             yield event.plain_result(f"生成图片失败: {exc!s}")
