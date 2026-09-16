@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import base64
 import asyncio
-import tempfile
+
 from dataclasses import replace
-from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
+from astrbot.api.message_components import Image
 
 from .meme_spec import MemeRegistry, MemeTemplate
 from .render import get_render_config, parse_command_options, render_meme
@@ -90,14 +91,12 @@ class MaddelenaMemesPlugin(Star):
                 meme,
                 render_config,
             )
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
-                temp_file.write(image_bytes)
-                temp_path = temp_file.name
-            try:
-                event.stop_event()
-                yield event.image_result(temp_path)
-            finally:
-                Path(temp_path).unlink(missing_ok=True)
+            # 直接将内存中的字节流转为 base64
+            b64_str = base64.b64encode(image_bytes).decode("utf-8")
+            
+            event.stop_event()
+            # 构造 base64 协议的 URL 直接发送（跳过本地文件系统）
+            yield event.chain_result([Image(url=f"base64://{b64_str}")])
         except Exception as exc:
             logger.error(f"[maddelena] 生成图片失败 ({meme.id}): {exc!s}")
             event.stop_event()
