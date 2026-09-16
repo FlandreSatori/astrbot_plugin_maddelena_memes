@@ -96,7 +96,7 @@ class MaddelenaMemesPlugin(Star):
             
             event.stop_event()
             # 构造 base64 协议的 URL 直接发送（跳过本地文件系统）
-            yield event.chain_result([Image(url=f"base64://{b64_str}")])
+            yield event.chain_result([Image(f"base64://{b64_str}")])
         except Exception as exc:
             logger.error(f"[maddelena] 生成图片失败 ({meme.id}): {exc!s}")
             event.stop_event()
